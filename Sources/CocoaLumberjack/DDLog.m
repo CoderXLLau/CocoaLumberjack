@@ -137,6 +137,8 @@ static NSUInteger _numProcessors;
         void *nonNullValue = GlobalLoggingQueueIdentityKey; // Whatever, just not null
         dispatch_queue_set_specific(_loggingQueue, GlobalLoggingQueueIdentityKey, nonNullValue, NULL);
 
+        // 进程数量 , 为啥不是activeProcessorCount?
+        
         // Figure out how many processors are available.
         // This may be used later for an optimization on uniprocessor machines.
 
@@ -325,9 +327,12 @@ static NSUInteger _numProcessors;
         }
     };
 
+    // TODO:?? 没看到阻塞的逻辑
+    // 日志添加到我们的队列
     if (asyncFlag) {
         dispatch_async(_loggingQueue, logBlock);
     } else if (dispatch_get_specific(GlobalLoggingQueueIdentityKey)) {
+        // 表示当前任务执行在特定消息队列,不使用dispatch_sync,直接执行即可,否则会死锁
         // We've logged an error message while on the logging queue...
         logBlock();
     } else {
@@ -452,6 +457,7 @@ static NSUInteger _numProcessors;
     [self.sharedInstance log:asynchronous message:message level:level flag:flag context:context file:file function:function line:line tag:tag];
 }
 
+/// 所有log收敛入口
 - (void)log:(BOOL)asynchronous
     message:(NSString *)message
       level:(DDLogLevel)level
@@ -461,6 +467,7 @@ static NSUInteger _numProcessors;
    function:(const char *)function
        line:(NSUInteger)line
         tag:(id)tag {
+    // 创建message对象
     DDLogMessage *logMessage = [[DDLogMessage alloc] initWithMessage:message
                                                                level:level
                                                                 flag:flag
@@ -472,6 +479,7 @@ static NSUInteger _numProcessors;
                                                              options:(DDLogMessageOptions)0
                                                            timestamp:nil];
 
+    // 添加到队列
     [self queueLogMessage:logMessage asynchronously:asynchronous];
 }
 
@@ -490,7 +498,7 @@ static NSUInteger _numProcessors;
 - (void)flushLog {
     NSAssert(!dispatch_get_specific(GlobalLoggingQueueIdentityKey),
              @"This method shouldn't be run on the logging thread/queue that make flush fast enough");
-    
+    // 同步阻塞
     dispatch_sync(_loggingQueue, ^{ @autoreleasepool {
         [self lt_flush];
     } });
@@ -780,6 +788,7 @@ static NSUInteger _numProcessors;
     return [theLoggersWithLevel copy];
 }
 
+/// 当前方法只能执行在GlobalLoggingQueueIdentityKey队列
 - (void)lt_log:(DDLogMessage *)logMessage {
     // Execute the given log message on each of our loggers.
 
@@ -801,6 +810,7 @@ static NSUInteger _numProcessors;
                 continue;
             }
 
+            // 日志处理器来处理日志消息
             dispatch_group_async(_loggingGroup, loggerNode->_loggerQueue, ^{ @autoreleasepool {
                 [loggerNode->_logger logMessage:logMessage];
             } });
@@ -856,7 +866,7 @@ static NSUInteger _numProcessors;
             } });
         }
     }
-
+    // 同步阻塞等待所有的group上任务完成,或者超时
     dispatch_group_wait(_loggingGroup, DISPATCH_TIME_FOREVER);
 }
 
